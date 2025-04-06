@@ -1,11 +1,27 @@
-
 import sqlite3
 import pandas as pd
 import random
+import time
 from faker import Faker
 from datetime import datetime, timedelta
+from geopy.geocoders import Nominatim
 
 fake = Faker()
+geolocator = Nominatim(user_agent="sales-dashboard")
+city_coords_cache = {}
+
+def get_lat_lon(city):
+    if city in city_coords_cache:
+        return city_coords_cache[city]
+    try:
+        location = geolocator.geocode(city)
+        time.sleep(1)  # Respect rate limits
+        if location:
+            city_coords_cache[city] = (location.latitude, location.longitude)
+            return location.latitude, location.longitude
+    except:
+        return None, None
+    return None, None
 
 # Connect to SQLite database (or create it)
 conn = sqlite3.connect("sales_data.db")
@@ -18,7 +34,9 @@ CREATE TABLE IF NOT EXISTS Customers (
     Name TEXT,
     Email TEXT,
     Location TEXT,
-    JoinDate TEXT
+    JoinDate TEXT,
+    Latitude REAL,
+    Longitude REAL
 )
 """)
 
@@ -47,14 +65,22 @@ CREATE TABLE IF NOT EXISTS Sales (
 # Generate Customers
 customers = []
 for _ in range(100):  # Generate 100 customers
+    city = fake.city()
+    lat, lon = get_lat_lon(city)
+    join_date = fake.date_between(start_date="-2y", end_date="today").strftime("%Y-%m-%d")
     customers.append((
         fake.name(),
         fake.email(),
-        fake.city(),
-        fake.date_between(start_date="-2y", end_date="today").strftime("%Y-%m-%d")
+        city,
+        join_date,
+        lat,
+        lon
     ))
 
-cursor.executemany("INSERT INTO Customers (Name, Email, Location, JoinDate) VALUES (?, ?, ?, ?)", customers)
+cursor.executemany("""
+    INSERT INTO Customers (Name, Email, Location, JoinDate, Latitude, Longitude)
+    VALUES (?, ?, ?, ?, ?, ?)
+""", customers)
 
 # Generate Products
 categories = ["Electronics", "Clothing", "Home & Kitchen", "Books", "Toys"]
@@ -73,7 +99,7 @@ cursor.execute("SELECT CustomerID FROM Customers")
 customer_ids = [row[0] for row in cursor.fetchall()]
 
 cursor.execute("SELECT ProductID, Price FROM Products")
-product_data = cursor.fetchall()  # List of tuples (ProductID, Price)
+product_data = cursor.fetchall()
 
 # Generate Sales
 sales = []
@@ -86,7 +112,10 @@ for _ in range(500):  # Generate 500 sales transactions
     
     sales.append((customer_id, product_id, date, quantity, total_price))
 
-cursor.executemany("INSERT INTO Sales (CustomerID, ProductID, Date, Quantity, TotalPrice) VALUES (?, ?, ?, ?, ?)", sales)
+cursor.executemany("""
+    INSERT INTO Sales (CustomerID, ProductID, Date, Quantity, TotalPrice)
+    VALUES (?, ?, ?, ?, ?)
+""", sales)
 
 # Commit and close
 conn.commit()
